@@ -1,11 +1,17 @@
 import asyncio
+import os
 from ChaatPy import chaatpy
+import logging
+import dotenv
 
+dotenv.load_dotenv()
 
 async def main():
-    client = chaatpy.Client()
+    client = chaatpy.Client(prefix='?')
     await client.create_session()
     await client.getCSTFToken()
+
+    channel = client.getChannel(os.environ.get('HASHID'))
 
     @client.event
     async def on_ready():
@@ -14,10 +20,12 @@ async def main():
     @client.event
     async def on_message(message: chaatpy.Message):
         print(f"[{message.name}] {message.msg}")
-        if message.msg == 'こんにちは':
-            await channel.send(chaatpy.Message({'msg': 'こんにちは！！', 'type': 'chat'}))
+        await client.process_command(message)
 
-    channel = client.getChannel('ChannelID')
+    @client.command("test")
+    async def test_command(message: chaatpy.Message, *args):
+        await channel.send(chaatpy.Message({'type': 'chat', 'msg': 'Test Now.'}))
+        return 
 
     try:
         await client.join(channel.hash)

@@ -10,7 +10,7 @@ CookieToken = re.compile(r'[a-zA-Z0-9+/=]{88}')
 CSRFToken = re.compile(r'[0-9a-fA-F]{32}')
 
 class Client:
-    def __init__(self):
+    def __init__(self, prefix: str = '!'):
         self.cookie_token = None
         self.room_id = None
         self.user_id = None
@@ -18,8 +18,11 @@ class Client:
         self.sec_websocket_key = base64.b64encode(uuid.uuid4().bytes).decode('utf-8')
         self.session = None
         self.cstftoken = None
+        self.prefix = prefix
+        self.last_author = None
 
         self.listeners = {}
+        self.commands = {}
         pass
 
     async def close(self):
@@ -82,6 +85,69 @@ class Client:
                 if isinstance(result, Exception):
                     print(f"[Error in {listener.__name__}]: {result}")
 
+    def command(self, name):
+        def decorator(func):
+            if name not in self.commands:
+                self.commands[name] = []
+            self.commands[name].append(func)
+            
+            return func
+        return decorator
+
+    async def process_command(self, message):
+        from ChaatPy.chaatpy import Message
+        import asyncio
+        import inspect
+
+        if type(message) is not Message:
+            return
+        
+        self.last_author = message.name
+
+        content = message.msg
+
+        if type(content) is not str:
+            return
+
+        if not content.startswith(self.prefix):
+            return
+
+        command_line = content.removeprefix(self.prefix).strip()
+        
+        if not command_line:
+            return
+            
+        parts = command_line.split()
+
+        name = parts[0]
+        args = parts[1:]
+        
+        if name not in self.commands:
+            return
+
+        listeners = self.commands[name]
+
+        tasks = []
+
+        func_args = [message] + args
+        
+        for listener in listeners:
+            try:
+                if inspect.iscoroutinefunction(listener):
+                    tasks.append(asyncio.create_task(listener(*func_args)))
+                else:
+                    loop = asyncio.get_running_loop()
+                    tasks.append(loop.run_in_executor(None, listener, *func_args))
+            except Exception as e:
+                print(f"[Error registering listener {getattr(listener, '__name__', 'unknown')} for command {name}]: {e}")
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result, listener in zip(results, listeners):
+                if isinstance(result, Exception):
+                    print(f"[Error in command listener {getattr(listener, '__name__', 'unknown')} for command {name}]: {result}")
+
     async def join(self, room: str):
         headers_join = {
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -118,8 +184,6 @@ class Client:
 
         try:
             async with self.session.ws_connect('wss://ws-c.kuku.lu:21001/', headers=headers_ws) as ws:
-                print('ログインを試みています・・')
-
                 join_json = json.dumps({
                     "type": "join",
                     "room": room,
