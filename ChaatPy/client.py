@@ -5,6 +5,7 @@ import asyncio
 import base64
 import uuid
 import inspect
+import orjson
 
 CookieToken = re.compile(r'[a-zA-Z0-9+/=]{88}')
 CSRFToken = re.compile(r'[0-9a-fA-F]{32}')
@@ -23,6 +24,8 @@ class Client:
 
         self.listeners = {}
         self.commands = {}
+
+        self.cache_messages = {}
         pass
 
     async def close(self):
@@ -149,6 +152,13 @@ class Client:
                     print(f"[Error in command listener {getattr(listener, '__name__', 'unknown')} for command {name}]: {result}")
 
     async def join(self, room: str):
+        from ChaatPy.message import FetchedMessage
+        msgs = await self.getChannel(room).fetch_messages()
+        for m in msgs:
+            if not isinstance(m, FetchedMessage):
+                return
+            self.cache_messages[m.num] = m
+        
         headers_join = {
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
             'accept-language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -182,47 +192,52 @@ class Client:
                 'Sec-WebSocket-Key': self.sec_websocket_key,
             }
 
-        try:
-            async with self.session.ws_connect('wss://ws-c.kuku.lu:21001/', headers=headers_ws) as ws:
-                join_json = json.dumps({
-                    "type": "join",
-                    "room": room,
-                    "cookie_token": self.cookie_token,
-                    "name": "ああああ#1030"
-                })
+        while True:
+            try:
+                async with self.session.ws_connect('wss://ws-c.kuku.lu:21001/', headers=headers_ws) as ws:
+                    await ws.send_str('@' + orjson.dumps({
+                        "type": "join",
+                        "room": room,
+                        "cookie_token": self.cookie_token,
+                        "name": "ああああ#1030"
+                    }).decode())
 
-                await ws.send_str('@' + join_json)
+                    async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            data = msg.data
+                            if not data.startswith("@"):
+                                continue
 
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        try:
-                            m = json.loads(msg.data.removeprefix("@"))
-                        except Exception as e:
-                            print(f"JSONデコードエラー: {e}")
-                            continue
+                            try:
+                                m = orjson.loads(data[1:])
+                            except Exception as e:
+                                print(f"JSON decode error: {e}")
+                                continue
 
-                        match m.get('type'):
-                            case "join_complete":
+                            print(m)
+
+                            t = m.get('type')
+                            if not t:
+                                continue
+
+                            if t == "join_complete":
                                 self.room_id = m.get('room')
                                 self.user_id = m.get('user')
                                 await self.dispatch('on_ready')
-                            case "data":
+
+                            elif t == "data":
                                 from ChaatPy.chaatpy import Message
+                                self.cache_messages[m.get('num')] = await self.getChannel(room).fetch_message(m.get('num'))
                                 await self.dispatch('on_message', Message(m.get('data')))
-                            case "polling":
-                                if not self.user_id:
-                                    print("警告: user_id が未設定です。pollingスキップ。")
-                                    continue
-                                if self.user_id == m.get('user'):
-                                    await ws.send_str('@' + json.dumps({"type": "polling"}))
-                            case _:
-                                continue
-                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                        print("WebSocket 接続が切断されました。再接続を試みます。")
-                        await asyncio.sleep(2)
-                        await self.join(room)
-                        return
-        except aiohttp.ClientError as e:
-            print(f"接続エラー: {e}")
-            await asyncio.sleep(3)
-            await self.join(room)
+
+                            elif t == "polling":
+                                if self.user_id and self.user_id == m.get('user'):
+                                    await ws.send_str('@{"type":"polling"}')
+
+                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            print("WebSocket disconnected, retrying...")
+                            break 
+            except aiohttp.ClientError as e:
+                print(f"Connection error: {e}")
+                await asyncio.sleep(3)
+                continue

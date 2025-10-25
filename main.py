@@ -15,11 +15,12 @@ async def main():
 
     @client.event
     async def on_ready():
-        print("起動完了")
+        print('キャッシュしました。')
+        print("[on_ready] 起動完了")
 
     @client.event
     async def on_message(message: chaatpy.Message):
-        print(f"[{message.name}] {message.msg}")
+        print(f"[on_message] [{message.name}] {message.msg}")
         await client.process_command(message)
 
     @client.command("test")
