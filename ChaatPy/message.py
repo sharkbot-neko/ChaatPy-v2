@@ -18,6 +18,7 @@ class Message:
         self.user_id = self.data.get('userid', None)
         self.date = self.data.get('date', None)
         self.append = self.data.get('append', [])
+        self.mode = self.data.get('mode', None)
 
     def to_json(self):
         return self.data

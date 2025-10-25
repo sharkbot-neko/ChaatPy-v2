@@ -11,7 +11,7 @@ CookieToken = re.compile(r'[a-zA-Z0-9+/=]{88}')
 CSRFToken = re.compile(r'[0-9a-fA-F]{32}')
 
 class Client:
-    def __init__(self, prefix: str = '!'):
+    def __init__(self, prefix: str = '!', debug: bool = False):
         self.cookie_token = None
         self.room_id = None
         self.user_id = None
@@ -20,6 +20,7 @@ class Client:
         self.session = None
         self.cstftoken = None
         self.prefix = prefix
+        self.debug = debug
         self.last_author = None
 
         self.listeners = {}
@@ -214,7 +215,8 @@ class Client:
                                 print(f"JSON decode error: {e}")
                                 continue
 
-                            print(m)
+                            if self.debug:
+                                print(m)
 
                             t = m.get('type')
                             if not t:
@@ -227,7 +229,6 @@ class Client:
 
                             elif t == "data":
                                 from ChaatPy.chaatpy import Message
-                                self.cache_messages[m.get('num')] = await self.getChannel(room).fetch_message(m.get('num'))
                                 await self.dispatch('on_message', Message(m.get('data')))
 
                             elif t == "polling":
